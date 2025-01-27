@@ -1,6 +1,19 @@
 package org.jetbrains.compose.resources
 
-import com.squareup.kotlinpoet.*
+import com.squareup.kotlinpoet.AnnotationSpec
+import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.CodeBlock
+import com.squareup.kotlinpoet.FileSpec
+import com.squareup.kotlinpoet.FunSpec
+import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.MAP
+import com.squareup.kotlinpoet.MUTABLE_MAP
+import com.squareup.kotlinpoet.MemberName
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.asClassName
+import com.squareup.kotlinpoet.withIndent
 import org.jetbrains.compose.internal.utils.uppercaseFirstChar
 import java.nio.file.Path
 import java.util.*
@@ -44,6 +57,9 @@ private fun ResourceType.requiresKeyName() =
 private val resourceItemClass = ClassName("org.jetbrains.compose.resources", "ResourceItem")
 private val experimentalAnnotation = AnnotationSpec.builder(
     ClassName("org.jetbrains.compose.resources", "ExperimentalResourceApi")
+).build()
+private val internalAnnotation = AnnotationSpec.builder(
+    ClassName("org.jetbrains.compose.resources", "InternalResourceApi")
 ).build()
 
 private fun CodeBlock.Builder.addQualifiers(resourceItem: ResourceItem): CodeBlock.Builder {
@@ -111,25 +127,14 @@ private fun CodeBlock.Builder.addQualifiers(resourceItem: ResourceItem): CodeBlo
     return this
 }
 
-// We need to divide accessors by different files because
-//
-// if all accessors are generated in a single object
-// then a build may fail with: org.jetbrains.org.objectweb.asm.MethodTooLargeException: Method too large: Res$drawable.<clinit> ()V
-// e.g. https://github.com/JetBrains/compose-multiplatform/issues/4285
-//
-// if accessor initializers are extracted from the single object but located in the same file
-// then a build may fail with: org.jetbrains.org.objectweb.asm.ClassTooLargeException: Class too large: Res$drawable
-private const val ITEMS_PER_FILE_LIMIT = 500
-internal fun getResFileSpecs(
-    //type -> id -> items
-    resources: Map<ResourceType, Map<String, List<ResourceItem>>>,
+internal fun getResFileSpec(
     packageName: String,
+    fileName: String,
     moduleDir: String,
     isPublic: Boolean
-): List<FileSpec> {
+): FileSpec {
     val resModifier = if (isPublic) KModifier.PUBLIC else KModifier.INTERNAL
-    val files = mutableListOf<FileSpec>()
-    val resClass = FileSpec.builder(packageName, "Res").also { file ->
+    return FileSpec.builder(packageName, fileName).also { file ->
         file.addAnnotation(
             AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
                 .addMember("org.jetbrains.compose.resources.InternalResourceApi::class")
@@ -138,7 +143,6 @@ internal fun getResFileSpecs(
         )
         file.addType(TypeSpec.objectBuilder("Res").also { resObject ->
             resObject.addModifiers(resModifier)
-            resObject.addAnnotation(experimentalAnnotation)
 
             //readFileBytes
             val readResourceBytes = MemberName("org.jetbrains.compose.resources", "readResourceBytes")
@@ -154,6 +158,7 @@ internal fun getResFileSpecs(
                     @return The content of the file as a byte array.
                 """.trimIndent()
                     )
+                    .addAnnotation(experimentalAnnotation)
                     .addParameter("path", String::class)
                     .addModifiers(KModifier.SUSPEND)
                     .returns(ByteArray::class)
@@ -175,6 +180,7 @@ internal fun getResFileSpecs(
                     @return The URI string of the file.
                 """.trimIndent()
                     )
+                    .addAnnotation(experimentalAnnotation)
                     .addParameter("path", String::class)
                     .returns(String::class)
                     .addStatement("""return %M("$moduleDir" + path)""", getResourceUri)
@@ -186,7 +192,27 @@ internal fun getResFileSpecs(
             }
         }.build())
     }.build()
-    files.add(resClass)
+}
+
+// We need to divide accessors by different files because
+//
+// if all accessors are generated in a single object
+// then a build may fail with: org.jetbrains.org.objectweb.asm.MethodTooLargeException: Method too large: Res$drawable.<clinit> ()V
+// e.g. https://github.com/JetBrains/compose-multiplatform/issues/4285
+//
+// if accessor initializers are extracted from the single object but located in the same file
+// then a build may fail with: org.jetbrains.org.objectweb.asm.ClassTooLargeException: Class too large: Res$drawable
+private const val ITEMS_PER_FILE_LIMIT = 500
+internal fun getAccessorsSpecs(
+    //type -> id -> items
+    resources: Map<ResourceType, Map<String, List<ResourceItem>>>,
+    packageName: String,
+    sourceSetName: String,
+    moduleDir: String,
+    isPublic: Boolean
+): List<FileSpec> {
+    val resModifier = if (isPublic) KModifier.PUBLIC else KModifier.INTERNAL
+    val files = mutableListOf<FileSpec>()
 
     //we need to sort it to generate the same code on different platforms
     sortResources(resources).forEach { (type, idToResources) ->
@@ -196,7 +222,8 @@ internal fun getResFileSpecs(
             files.add(
                 getChunkFileSpec(
                     type,
-                    index,
+                    "${type.accessorName.uppercaseFirstChar()}$index.$sourceSetName",
+                    sourceSetName.uppercaseFirstChar() + type.accessorName.uppercaseFirstChar() + index,
                     packageName,
                     moduleDir,
                     resModifier,
@@ -211,14 +238,14 @@ internal fun getResFileSpecs(
 
 private fun getChunkFileSpec(
     type: ResourceType,
-    index: Int,
+    fileName: String,
+    chunkClassName: String,
     packageName: String,
     moduleDir: String,
     resModifier: KModifier,
     idToResources: Map<String, List<ResourceItem>>
 ): FileSpec {
-    val chunkClassName = type.accessorName.uppercaseFirstChar() + index
-    return FileSpec.builder(packageName, chunkClassName).also { chunkFile ->
+    return FileSpec.builder(packageName, fileName).also { chunkFile ->
         chunkFile.addAnnotation(
             AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
                 .addMember("org.jetbrains.compose.resources.InternalResourceApi::class")
@@ -227,33 +254,47 @@ private fun getChunkFileSpec(
 
         val objectSpec = TypeSpec.objectBuilder(chunkClassName).also { typeObject ->
             typeObject.addModifiers(KModifier.PRIVATE)
-            typeObject.addAnnotation(experimentalAnnotation)
             val properties = idToResources.keys.map { resName ->
                 PropertySpec.builder(resName, type.getClassName())
-                    .delegate("\nlazy·{ init_$resName() }")
+                    .delegate("\nlazy·{ %N() }", "init_$resName")
                     .build()
             }
             typeObject.addProperties(properties)
         }.build()
         chunkFile.addType(objectSpec)
 
+        //__collect${chunkClassName}Resources function
+        chunkFile.addFunction(
+            FunSpec.builder("_collect${chunkClassName}Resources")
+                .addAnnotation(internalAnnotation)
+                .addModifiers(KModifier.INTERNAL)
+                .addParameter(
+                    "map",
+                    MUTABLE_MAP.parameterizedBy(String::class.asClassName(), type.getClassName())
+                )
+                .also { collectFun ->
+                    idToResources.keys.forEach { resName ->
+                        collectFun.addStatement("map.put(%S, $chunkClassName.%N)", resName, resName)
+                    }
+                }
+                .build()
+        )
+
         idToResources.forEach { (resName, items) ->
             val accessor = PropertySpec.builder(resName, type.getClassName(), resModifier)
                 .receiver(ClassName(packageName, "Res", type.accessorName))
-                .addAnnotation(experimentalAnnotation)
-                .getter(FunSpec.getterBuilder().addStatement("return $chunkClassName.$resName").build())
+                .getter(FunSpec.getterBuilder().addStatement("return $chunkClassName.%N", resName).build())
                 .build()
             chunkFile.addProperty(accessor)
 
             val initializer = FunSpec.builder("init_$resName")
                 .addModifiers(KModifier.PRIVATE)
-                .addAnnotation(experimentalAnnotation)
                 .returns(type.getClassName())
                 .addStatement(
                     CodeBlock.builder()
                         .add("return %T(\n", type.getClassName()).withIndent {
-                            add("\"${type}:${resName}\",")
-                            if (type.requiresKeyName()) add(" \"$resName\",")
+                            add("%S,", "$type:$resName")
+                            if (type.requiresKeyName()) add(" %S,", resName)
                             withIndent {
                                 add("\nsetOf(\n").withIndent {
                                     items.forEach { item ->
@@ -276,6 +317,79 @@ private fun getChunkFileSpec(
         }
     }.build()
 }
+
+internal fun getExpectResourceCollectorsFileSpec(
+    packageName: String,
+    fileName: String,
+    isPublic: Boolean
+): FileSpec {
+    val resModifier = if (isPublic) KModifier.PUBLIC else KModifier.INTERNAL
+    return FileSpec.builder(packageName, fileName).also { file ->
+        ResourceType.values().forEach { type ->
+            val typeClassName = type.getClassName()
+            file.addProperty(
+                PropertySpec
+                    .builder(
+                        "all${typeClassName.simpleName}s",
+                        MAP.parameterizedBy(String::class.asClassName(), typeClassName),
+                        KModifier.EXPECT,
+                        resModifier
+                    )
+                    .addAnnotation(experimentalAnnotation)
+                    .receiver(ClassName(packageName, "Res"))
+                    .build()
+            )
+        }
+    }.build()
+}
+
+internal fun getActualResourceCollectorsFileSpec(
+    packageName: String,
+    fileName: String,
+    isPublic: Boolean,
+    useActualModifier: Boolean, //e.g. java only project doesn't need actual modifiers
+    typeToCollectorFunctions: Map<ResourceType, List<String>>
+): FileSpec = FileSpec.builder(packageName, fileName).also { file ->
+    val resModifier = if (isPublic) KModifier.PUBLIC else KModifier.INTERNAL
+
+    file.addAnnotation(
+        AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+            .addMember("org.jetbrains.compose.resources.InternalResourceApi::class")
+            .build()
+    )
+
+    ResourceType.values().forEach { type ->
+        val typeClassName = type.getClassName()
+        val initBlock = CodeBlock.builder()
+            .addStatement("lazy {").withIndent {
+                addStatement("val map = mutableMapOf<String, %T>()", typeClassName)
+                typeToCollectorFunctions.get(type).orEmpty().forEach { item ->
+                    addStatement("%N(map)", item)
+                }
+                addStatement("return@lazy map")
+            }
+            .addStatement("}")
+            .build()
+
+        val mods = if (useActualModifier) {
+            listOf(KModifier.ACTUAL, resModifier)
+        } else {
+            listOf(resModifier)
+        }
+
+        val property = PropertySpec
+            .builder(
+                "all${typeClassName.simpleName}s",
+                MAP.parameterizedBy(String::class.asClassName(), typeClassName),
+                mods
+            )
+            .addAnnotation(experimentalAnnotation)
+            .receiver(ClassName(packageName, "Res"))
+            .delegate(initBlock)
+            .build()
+        file.addProperty(property)
+    }
+}.build()
 
 private fun sortResources(
     resources: Map<ResourceType, Map<String, List<ResourceItem>>>

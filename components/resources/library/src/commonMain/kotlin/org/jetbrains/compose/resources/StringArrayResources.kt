@@ -16,7 +16,6 @@ import org.jetbrains.compose.resources.vector.xmldom.NodeList
  * @param key The key used to retrieve the string array resource.
  * @param items The set of resource items associated with the string array resource.
  */
-@ExperimentalResourceApi
 @Immutable
 class StringArrayResource
 @InternalResourceApi constructor(id: String, val key: String, items: Set<ResourceItem>) : Resource(id, items)
@@ -29,10 +28,9 @@ class StringArrayResource
  *
  * @throws IllegalStateException if the string array with the given ID is not found.
  */
-@ExperimentalResourceApi
 @Composable
 fun stringArrayResource(resource: StringArrayResource): List<String> {
-    val resourceReader = LocalResourceReader.current
+    val resourceReader = LocalResourceReader.currentOrPreview
     val array by rememberResourceState(resource, { emptyList() }) { env ->
         loadStringArray(resource, resourceReader, env)
     }
@@ -47,11 +45,24 @@ fun stringArrayResource(resource: StringArrayResource): List<String> {
  *
  * @throws IllegalStateException if the string array with the given ID is not found.
  */
-@ExperimentalResourceApi
 suspend fun getStringArray(resource: StringArrayResource): List<String> =
-    loadStringArray(resource, DefaultResourceReader, getResourceEnvironment())
+    loadStringArray(resource, DefaultResourceReader, getSystemResourceEnvironment())
 
-@OptIn(ExperimentalResourceApi::class, InternalResourceApi::class)
+/**
+ * Loads a list of strings using the specified string array resource.
+ *
+ * @param environment The resource environment.
+ * @param resource The string array resource to be used.
+ * @return A list of strings representing the items in the string array.
+ *
+ * @throws IllegalStateException if the string array with the given ID is not found.
+ */
+@ExperimentalResourceApi
+suspend fun getStringArray(
+    environment: ResourceEnvironment,
+    resource: StringArrayResource
+): List<String> = loadStringArray(resource, DefaultResourceReader, environment)
+
 private suspend fun loadStringArray(
     resource: StringArrayResource,
     resourceReader: ResourceReader,

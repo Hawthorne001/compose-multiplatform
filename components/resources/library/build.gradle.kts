@@ -1,14 +1,15 @@
+import kotlinx.validation.ExperimentalBCVApi
 import org.jetbrains.compose.ExperimentalComposeLibrary
 import org.jetbrains.kotlin.gradle.targets.js.dsl.ExperimentalWasmDsl
 
 plugins {
     kotlin("multiplatform")
     id("org.jetbrains.compose")
+    id("org.jetbrains.kotlin.plugin.compose")
     id("maven-publish")
     id("com.android.library")
+    id("org.jetbrains.kotlinx.binary-compatibility-validator")
 }
-
-val composeVersion = extra["compose.version"] as String
 
 kotlin {
     jvm("desktop")
@@ -53,6 +54,7 @@ kotlin {
                 optIn("kotlinx.cinterop.ExperimentalForeignApi")
                 optIn("kotlin.experimental.ExperimentalNativeApi")
                 optIn("org.jetbrains.compose.resources.InternalResourceApi")
+                optIn("org.jetbrains.compose.resources.ExperimentalResourceApi")
             }
         }
 
@@ -112,6 +114,10 @@ kotlin {
         }
         val androidMain by getting {
             dependsOn(jvmAndAndroidMain)
+            dependencies {
+                //it will be called only in android instrumented tests where the library should be available
+                compileOnly(libs.androidx.test.monitor)
+            }
         }
         val androidInstrumentedTest by getting {
             dependsOn(jvmAndAndroidTest)
@@ -155,7 +161,7 @@ kotlin {
 }
 
 android {
-    compileSdk = 34
+    compileSdk = 35
     namespace = "org.jetbrains.compose.components.resources"
     defaultConfig {
         minSdk = 21
@@ -184,6 +190,7 @@ android {
             assets.srcDir("src/androidInstrumentedTest/assets")
         }
         named("test") { resources.srcDir(commonTestResources) }
+        named("main") { manifest.srcFile("src/androidMain/AndroidManifest.xml") }
     }
 }
 
@@ -193,9 +200,10 @@ configureMavenPublication(
     name = "Resources for Compose JB"
 )
 
-// adding it here to make sure skiko is unpacked and available in web tests
-compose.experimental {
-    web.application {}
+apiValidation {
+    @OptIn(ExperimentalBCVApi::class)
+    klib { enabled = true }
+    nonPublicMarkers.add("org.jetbrains.compose.resources.InternalResourceApi")
 }
 
 //utility task to generate CLDRPluralRuleLists.kt file by 'CLDRPluralRules/plurals.xml'
@@ -204,11 +212,4 @@ tasks.register<GeneratePluralRuleListsTask>("generatePluralRuleLists") {
     pluralsFile = projectDir.file("CLDRPluralRules/plurals.xml")
     outputFile = projectDir.file("src/commonMain/kotlin/org/jetbrains/compose/resources/plural/CLDRPluralRuleLists.kt")
     samplesOutputFile = projectDir.file("src/commonTest/kotlin/org/jetbrains/compose/resources/CLDRPluralRuleLists.test.kt")
-}
-
-afterEvaluate {
-    // TODO(o.k.): remove this after we refactor jsAndWasmMain source set in skiko to get rid of broken "common" js-interop
-    tasks.configureEach {
-        if (name == "compileWebMainKotlinMetadata") enabled = false
-    }
 }

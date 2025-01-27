@@ -5,11 +5,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.runComposeUiTest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
-import org.jetbrains.skiko.URIManager
+import kotlinx.coroutines.withContext
 import kotlin.test.*
 
-@OptIn(ExperimentalTestApi::class, ExperimentalResourceApi::class, InternalResourceApi::class)
+@OptIn(ExperimentalTestApi::class, InternalResourceApi::class)
 class ComposeResourceTest {
 
     init {
@@ -20,7 +22,7 @@ class ComposeResourceTest {
 
     @Test
     fun testCountRecompositions() = runComposeUiTest {
-        var res by mutableStateOf(DrawableResource("1.png"))
+        var res by mutableStateOf(TestDrawableResource("1.png"))
         val recompositionsCounter = RecompositionsCounter()
         setContent {
             CompositionLocalProvider(LocalComposeEnvironment provides TestComposeEnvironment) {
@@ -31,7 +33,7 @@ class ComposeResourceTest {
             }
         }
         waitForIdle()
-        res = DrawableResource("2.png")
+        res = TestDrawableResource("2.png")
         waitForIdle()
         assertEquals(2, recompositionsCounter.count)
     }
@@ -39,7 +41,7 @@ class ComposeResourceTest {
     @Test
     fun testImageResourceCache() = runComposeUiTest {
         val testResourceReader = TestResourceReader()
-        var res by mutableStateOf(DrawableResource("1.png"))
+        var res by mutableStateOf(TestDrawableResource("1.png"))
         setContent {
             CompositionLocalProvider(
                 LocalResourceReader provides testResourceReader,
@@ -49,13 +51,51 @@ class ComposeResourceTest {
             }
         }
         waitForIdle()
-        res = DrawableResource("2.png")
+        res = TestDrawableResource("2.png")
         waitForIdle()
-        res = DrawableResource("1.png")
+        res = TestDrawableResource("1.png")
         waitForIdle()
 
         assertEquals(
             expected = listOf("1.png", "2.png"), //no second read of 1.png
+            actual = testResourceReader.readPaths
+        )
+    }
+
+    @Test
+    fun testImageResourceDensity() = runComposeUiTest {
+        val testResourceReader = TestResourceReader()
+        val imgRes = DrawableResource(
+            "test_id", setOf(
+                ResourceItem(setOf(DensityQualifier.XXXHDPI), "2.png", -1, -1),
+                ResourceItem(setOf(DensityQualifier.MDPI), "1.png", -1, -1),
+            )
+        )
+        val mdpiEnvironment = object : ComposeEnvironment {
+            @Composable
+            override fun rememberEnvironment() = ResourceEnvironment(
+                language = LanguageQualifier("en"),
+                region = RegionQualifier("US"),
+                theme = ThemeQualifier.LIGHT,
+                density = DensityQualifier.MDPI
+            )
+        }
+
+        var environment by mutableStateOf(TestComposeEnvironment)
+        setContent {
+            CompositionLocalProvider(
+                LocalResourceReader provides testResourceReader,
+                LocalComposeEnvironment provides environment
+            ) {
+                Image(painterResource(imgRes), null)
+            }
+        }
+        waitForIdle()
+        environment = mdpiEnvironment
+        waitForIdle()
+
+        assertEquals(
+            expected = listOf("2.png", "1.png"), //XXXHDPI - fist, MDPI - next
             actual = testResourceReader.readPaths
         )
     }
@@ -294,7 +334,7 @@ class ComposeResourceTest {
         var uri2 = ""
         setContent {
             CompositionLocalProvider(LocalComposeEnvironment provides TestComposeEnvironment) {
-                val resourceReader = LocalResourceReader.current
+                val resourceReader = LocalResourceReader.currentOrPreview
                 uri1 = resourceReader.getUri("1.png")
                 uri2 = resourceReader.getUri("2.png")
             }
@@ -303,5 +343,75 @@ class ComposeResourceTest {
 
         assertTrue(uri1.endsWith("/1.png"))
         assertTrue(uri2.endsWith("/2.png"))
+    }
+
+    @OptIn(ExperimentalResourceApi::class)
+    @Test
+    fun testGetResourceBytes() = runTest {
+        val env = getSystemResourceEnvironment()
+        val imageBytes = getDrawableResourceBytes(env, TestDrawableResource("1.png"))
+        assertEquals(946, imageBytes.size)
+        val fontBytes = getFontResourceBytes(env, TestFontResource("font_awesome.otf"))
+        assertEquals(134808, fontBytes.size)
+    }
+
+    @OptIn(ExperimentalResourceApi::class)
+    @Test
+    fun testGetResourceEnvironment() = runComposeUiTest {
+        var environment: ResourceEnvironment? = null
+        setContent {
+            CompositionLocalProvider(LocalComposeEnvironment provides TestComposeEnvironment) {
+                environment = rememberResourceEnvironment()
+            }
+        }
+        waitForIdle()
+
+        val systemEnvironment = getSystemResourceEnvironment()
+        assertEquals(systemEnvironment, environment)
+    }
+
+    @Test
+    fun rememberResourceStateAffectedByEnvironmentChanges() = runComposeUiTest {
+        val env2 = ResourceEnvironment(
+            language = LanguageQualifier("en"),
+            region = RegionQualifier("CA"),
+            theme = ThemeQualifier.DARK,
+            density = DensityQualifier.MDPI
+        )
+
+        val envState = mutableStateOf(TestComposeEnvironment)
+        var lastEnv1: ResourceEnvironment? = null
+        var lastEnv2: ResourceEnvironment? = null
+        var lastEnv3: ResourceEnvironment? = null
+
+        setContent {
+            CompositionLocalProvider(LocalComposeEnvironment provides envState.value) {
+                rememberResourceState(1, { "" }) {
+                    lastEnv1 = it
+                }
+                rememberResourceState(1, 2,  { "" }) {
+                    lastEnv2 = it
+                }
+                rememberResourceState(1, 2, 3,  { "" }) {
+                    lastEnv3 = it
+                }
+            }
+        }
+
+        assertNotEquals(null, lastEnv1)
+        assertNotEquals(env2, lastEnv1)
+        assertEquals(lastEnv1, lastEnv2)
+        assertEquals(lastEnv2, lastEnv3)
+
+        val testEnv2 = object : ComposeEnvironment {
+            @Composable
+            override fun rememberEnvironment() = env2
+        }
+        envState.value = testEnv2
+        waitForIdle()
+
+        assertEquals(env2, lastEnv1)
+        assertEquals(env2, lastEnv2)
+        assertEquals(env2, lastEnv3)
     }
 }
