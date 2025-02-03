@@ -4,6 +4,7 @@ plugins {
     kotlin("multiplatform")
     id("com.android.library")
     id("org.jetbrains.compose")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 kotlin {
@@ -39,37 +40,36 @@ kotlin {
         binaries.executable()
     }
 
-    listOf(
-        macosX64(),
-        macosArm64()
-    ).forEach { macosTarget ->
-        macosTarget.binaries {
-            executable {
-                entryPoint = "main"
-            }
-        }
-    }
-
+    applyDefaultHierarchyTemplate()
     sourceSets {
-        all {
-            languageSettings {
-                optIn("org.jetbrains.compose.resources.ExperimentalResourceApi")
-            }
-        }
+        val desktopMain by getting
+        val wasmJsMain by getting
+
         commonMain.dependencies {
             implementation(compose.runtime)
             implementation(compose.material3)
             implementation(project(":resources:library"))
         }
-        val desktopMain by getting
         desktopMain.dependencies {
             implementation(compose.desktop.common)
+        }
+        androidMain.dependencies {
+            implementation(libs.androidx.ui.tooling)
+            implementation(libs.androidx.ui.tooling.preview)
+        }
+
+        val nonAndroidMain by creating {
+            dependsOn(commonMain.get())
+            wasmJsMain.dependsOn(this)
+            desktopMain.dependsOn(this)
+            nativeMain.get().dependsOn(this)
+            jsMain.get().dependsOn(this)
         }
     }
 }
 
 android {
-    compileSdk = 34
+    compileSdk = 35
     namespace = "org.jetbrains.compose.resources.demo.shared"
     defaultConfig {
         minSdk = 21
@@ -77,6 +77,12 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+    }
+    buildFeatures {
+        compose = true
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.11"
     }
 }
 

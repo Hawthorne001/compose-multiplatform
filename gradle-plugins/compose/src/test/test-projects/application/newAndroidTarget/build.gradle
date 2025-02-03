@@ -1,7 +1,6 @@
-import org.jetbrains.compose.desktop.application.dsl.TargetFormat
-
 plugins {
     id "org.jetbrains.kotlin.multiplatform"
+    id "org.jetbrains.kotlin.plugin.compose"
     id "com.android.kotlin.multiplatform.library"
     id "org.jetbrains.compose"
 }
@@ -11,7 +10,7 @@ kotlin {
 
     androidLibrary {
         namespace = "com.google.samples.apps.diceroller.shared"
-        compileSdk = 34
+        compileSdk = 35
     }
 
     jvm()

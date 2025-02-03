@@ -1,22 +1,58 @@
 package org.jetbrains.compose.test.tests.integration
 
 import org.gradle.util.GradleVersion
-import org.jetbrains.compose.internal.utils.*
+import org.jetbrains.compose.desktop.application.internal.ComposeProperties
+import org.jetbrains.compose.internal.Version
+import org.jetbrains.compose.internal.utils.Arch
+import org.jetbrains.compose.internal.utils.OS
+import org.jetbrains.compose.internal.utils.currentArch
+import org.jetbrains.compose.internal.utils.currentOS
 import org.jetbrains.compose.resources.XmlValuesConverterTask
-import org.jetbrains.compose.test.utils.*
+import org.jetbrains.compose.test.utils.GradlePluginTestBase
+import org.jetbrains.compose.test.utils.TestProject
+import org.jetbrains.compose.test.utils.assertEqualTextFiles
+import org.jetbrains.compose.test.utils.assertNotEqualTextFiles
+import org.jetbrains.compose.test.utils.checkExists
+import org.jetbrains.compose.test.utils.checks
+import org.jetbrains.compose.test.utils.modify
+import org.junit.jupiter.api.Assumptions
 import org.junit.jupiter.api.Test
 import java.io.File
 import java.util.zip.ZipFile
+import kotlin.io.path.Path
+import kotlin.io.path.invariantSeparatorsPathString
 import kotlin.io.path.relativeTo
-import kotlin.test.*
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ResourcesTest : GradlePluginTestBase() {
     @Test
+    fun testSafeImport() {
+        with(testProject("misc/commonResources")) {
+            file("src/commonMain/composeResources/drawable-en").renameTo(
+                file("src/commonMain/composeResources/drawable-rent")
+            )
+            gradleFailure("prepareKotlinIdeaImport").checks {
+                check.logContains("e: generateResourceAccessorsForCommonMain task was failed:")
+                check.logContains("contains unknown qualifier: 'rent'.")
+            }
+
+            gradle("prepareKotlinIdeaImport", "-Didea.sync.active=true").checks {
+                check.logContains("e: generateResourceAccessorsForCommonMain task was failed:")
+                check.logContains("contains unknown qualifier: 'rent'.")
+            }
+        }
+    }
+
+    @Test
     fun testGeneratedAccessors(): Unit = with(testProject("misc/commonResources")) {
         //check generated resource's accessors
-        gradle("generateComposeResClass").checks {
+        gradle("prepareKotlinIdeaImport").checks {
             assertDirectoriesContentEquals(
-                file("build/generated/compose/resourceGenerator/kotlin/app/group/resources_test/generated/resources"),
+                file("build/generated/compose/resourceGenerator/kotlin"),
                 file("expected")
             )
         }
@@ -25,17 +61,17 @@ class ResourcesTest : GradlePluginTestBase() {
         file("src/commonMain/composeResources/drawable/vector_2.xml").renameTo(
             file("src/commonMain/composeResources/drawable/vector_3.xml")
         )
-        gradle("generateComposeResClass").checks {
+        gradle("prepareKotlinIdeaImport").checks {
             assertNotEqualTextFiles(
-                file("build/generated/compose/resourceGenerator/kotlin/app/group/resources_test/generated/resources/Drawable0.kt"),
-                file("expected/Drawable0.kt")
+                file("build/generated/compose/resourceGenerator/kotlin/commonMainResourceAccessors/app/group/resources_test/generated/resources/Drawable0.commonMain.kt"),
+                file("expected/commonMainResourceAccessors/app/group/resources_test/generated/resources/Drawable0.commonMain.kt")
             )
         }
 
         file("src/commonMain/composeResources/drawable-en").renameTo(
             file("src/commonMain/composeResources/drawable-rent")
         )
-        gradle("generateComposeResClass").checks {
+        gradleFailure("prepareKotlinIdeaImport").checks {
             check.logContains(
                 """
                 contains unknown qualifier: 'rent'.
@@ -46,7 +82,7 @@ class ResourcesTest : GradlePluginTestBase() {
         file("src/commonMain/composeResources/drawable-rent").renameTo(
             file("src/commonMain/composeResources/drawable-rUS-en")
         )
-        gradle("generateComposeResClass").checks {
+        gradleFailure("prepareKotlinIdeaImport").checks {
             check.logContains(
                 """
                 Region qualifier must be declared after language: 'en-rUS'.
@@ -57,7 +93,7 @@ class ResourcesTest : GradlePluginTestBase() {
         file("src/commonMain/composeResources/drawable-rUS-en").renameTo(
             file("src/commonMain/composeResources/drawable-rUS")
         )
-        gradle("generateComposeResClass").checks {
+        gradleFailure("prepareKotlinIdeaImport").checks {
             check.logContains(
                 """
                 Region qualifier must be used only with language.
@@ -68,7 +104,7 @@ class ResourcesTest : GradlePluginTestBase() {
         file("src/commonMain/composeResources/drawable-rUS").renameTo(
             file("src/commonMain/composeResources/drawable-en-fr")
         )
-        gradle("generateComposeResClass").checks {
+        gradleFailure("prepareKotlinIdeaImport").checks {
             check.logContains(
                 """
                 contains repetitive qualifiers: 'en' and 'fr'.
@@ -79,7 +115,7 @@ class ResourcesTest : GradlePluginTestBase() {
         file("src/commonMain/composeResources/drawable-en-fr").renameTo(
             file("src/commonMain/composeResources/image")
         )
-        gradle("generateComposeResClass").checks {
+        gradleFailure("prepareKotlinIdeaImport").checks {
             check.logContains(
                 """
                 Unknown resource type: 'image'
@@ -90,7 +126,7 @@ class ResourcesTest : GradlePluginTestBase() {
         file("src/commonMain/composeResources/image").renameTo(
             file("src/commonMain/composeResources/files-de")
         )
-        gradle("generateComposeResClass").checks {
+        gradleFailure("prepareKotlinIdeaImport").checks {
             check.logContains(
                 """
                 The 'files' directory doesn't support qualifiers: 'files-de'.
@@ -101,7 +137,7 @@ class ResourcesTest : GradlePluginTestBase() {
         file("src/commonMain/composeResources/files-de").renameTo(
             file("src/commonMain/composeResources/strings")
         )
-        gradle("generateComposeResClass").checks {
+        gradleFailure("prepareKotlinIdeaImport").checks {
             check.logContains(
                 """
                 Unknown resource type: 'strings'.
@@ -112,7 +148,7 @@ class ResourcesTest : GradlePluginTestBase() {
         file("src/commonMain/composeResources/strings").renameTo(
             file("src/commonMain/composeResources/string-us")
         )
-        gradle("generateComposeResClass").checks {
+        gradleFailure("prepareKotlinIdeaImport").checks {
             check.logContains(
                 """
                 Forbidden directory name 'string-us'! String resources should be declared in 'values/strings.xml'.
@@ -128,6 +164,66 @@ class ResourcesTest : GradlePluginTestBase() {
             file("src/commonMain/composeResources/drawable/vector_2.xml")
         )
 
+        val testXml = file("src/commonMain/composeResources/values/test.xml")
+        testXml.writeText("")
+        gradleFailure("prepareKotlinIdeaImport").checks {
+            check.logContains("${testXml.name} is not valid. Check the file content.")
+        }
+
+        testXml.writeText("invalid")
+        gradleFailure("prepareKotlinIdeaImport").checks {
+            check.logContains("${testXml.name} is not valid. Check the file content.")
+        }
+
+        testXml.writeText(
+            """
+            <resources>
+                <aaa name="v">aaa</aaa>
+            </resources>
+        """.trimIndent()
+        )
+        gradleFailure("prepareKotlinIdeaImport").checks {
+            check.logContains("${testXml.name} is not valid. Unknown resource type: 'aaa'.")
+        }
+
+        testXml.writeText(
+            """
+            <resources>
+                <drawable name="v">aaa</drawable>
+            </resources>
+        """.trimIndent()
+        )
+        gradleFailure("prepareKotlinIdeaImport").checks {
+            check.logContains("${testXml.name} is not valid. Unknown string resource type: 'drawable'.")
+        }
+
+        testXml.writeText(
+            """
+            <resources>
+                <string name="v1">aaa</string>
+                <string name="v2">aaa</string>
+                <string name="v3">aaa</string>
+                <string name="v1">aaa</string>
+            </resources>
+        """.trimIndent()
+        )
+        gradleFailure("prepareKotlinIdeaImport").checks {
+            check.logContains("${testXml.name} is not valid. Duplicated key 'v1'.")
+        }
+
+        testXml.writeText(
+            """
+            <resources>
+                <string name="v1">aaa</string>
+                <string foo="v2">aaa</string>
+            </resources>
+        """.trimIndent()
+        )
+        gradleFailure("prepareKotlinIdeaImport").checks {
+            check.logContains("${testXml.name} is not valid. Attribute 'name' not found.")
+        }
+        testXml.delete()
+
         file("build.gradle.kts").modify { txt ->
             txt + """
                 compose.resources {
@@ -137,9 +233,9 @@ class ResourcesTest : GradlePluginTestBase() {
             """.trimIndent()
         }
 
-        gradle("generateComposeResClass").checks {
+        gradle("prepareKotlinIdeaImport").checks {
             assertDirectoriesContentEquals(
-                file("build/generated/compose/resourceGenerator/kotlin/my/lib/res"),
+                file("build/generated/compose/resourceGenerator/kotlin"),
                 file("expected-open-res")
             )
         }
@@ -147,9 +243,7 @@ class ResourcesTest : GradlePluginTestBase() {
 
     @Test
     fun testMultiModuleResources() {
-        val environment = defaultTestEnvironment.copy(
-            kotlinVersion = "2.0.0-Beta5"
-        )
+        val environment = defaultTestEnvironment
         with(
             testProject("misc/kmpResourcePublication", environment)
         ) {
@@ -161,60 +255,36 @@ class ResourcesTest : GradlePluginTestBase() {
             }
 
             gradle(":cmplib:publishAllPublicationsToMavenRepository").checks {
+                check.logContains("Configure multi-module compose resources")
+
                 val resDir = file("cmplib/src/commonMain/composeResources")
                 val resourcesFiles = resDir.walkTopDown()
                     .filter { !it.isDirectory && !it.isHidden }
-                    .getConvertedResources(resDir)
-                val subdir = "me.sample.library.resources"
+                    .getConvertedResources(resDir, "composeResources/me.sample.library.resources")
 
                 fun libpath(target: String, ext: String) =
                     "my-mvn/me/sample/library/cmplib-$target/1.0/cmplib-$target-1.0$ext"
 
                 val aar = file(libpath("android", ".aar"))
-                val innerClassesJar = aar.parentFile.resolve("aar-inner-classes.jar")
-                assertTrue(aar.exists(), "File not found: " + aar.path)
-                ZipFile(aar).use { zip ->
-                    resourcesFiles
-                        .filter { it.startsWith("font") }
-                        .forEach { fontRes ->
-                            assertNotNull(
-                                zip.getEntry("assets/composeResources/$subdir/$fontRes"),
-                                "Resource not found: '$fontRes' in aar '${aar.path}'"
-                            )
-                        }
-
-                    innerClassesJar.writeBytes(
-                        zip.getInputStream(zip.getEntry("classes.jar")).readBytes()
-                    )
-                }
-                ZipFile(innerClassesJar).use { zip ->
-                    resourcesFiles
-                        .filterNot { it.startsWith("font") }
-                        .forEach { res ->
-                            assertNotNull(
-                                zip.getEntry("composeResources/$subdir/$res"),
-                                "Resource not found: '$res' in aar/classes.jar '${aar.path}'"
-                            )
-                        }
-                }
+                checkResourcesZip(aar, resourcesFiles, true)
 
                 val jar = file(libpath("jvm", ".jar"))
-                checkResourcesZip(jar, resourcesFiles, subdir)
+                checkResourcesZip(jar, resourcesFiles, false)
 
                 if (currentOS == OS.MacOS) {
                     val iosx64ResZip = file(libpath("iosx64", "-kotlin_resources.kotlin_resources.zip"))
-                    checkResourcesZip(iosx64ResZip, resourcesFiles, subdir)
+                    checkResourcesZip(iosx64ResZip, resourcesFiles, false)
                     val iosarm64ResZip = file(libpath("iosarm64", "-kotlin_resources.kotlin_resources.zip"))
-                    checkResourcesZip(iosarm64ResZip, resourcesFiles, subdir)
+                    checkResourcesZip(iosarm64ResZip, resourcesFiles, false)
                     val iossimulatorarm64ResZip = file(
                         libpath("iossimulatorarm64", "-kotlin_resources.kotlin_resources.zip")
                     )
-                    checkResourcesZip(iossimulatorarm64ResZip, resourcesFiles, subdir)
+                    checkResourcesZip(iossimulatorarm64ResZip, resourcesFiles, false)
                 }
                 val jsResZip = file(libpath("js", "-kotlin_resources.kotlin_resources.zip"))
-                checkResourcesZip(jsResZip, resourcesFiles, subdir)
+                checkResourcesZip(jsResZip, resourcesFiles, false)
                 val wasmjsResZip = file(libpath("wasm-js", "-kotlin_resources.kotlin_resources.zip"))
-                checkResourcesZip(wasmjsResZip, resourcesFiles, subdir)
+                checkResourcesZip(wasmjsResZip, resourcesFiles, false)
             }
 
             file("settings.gradle.kts").modify { content ->
@@ -246,14 +316,50 @@ class ResourcesTest : GradlePluginTestBase() {
         }
     }
 
-    private fun checkResourcesZip(zipFile: File, resourcesFiles: Sequence<String>, subdir: String) {
+    @Test
+    fun testNewAgpResources() {
+        Assumptions.assumeTrue(defaultTestEnvironment.parsedGradleVersion >= GradleVersion.version("8.10.2"))
+        Assumptions.assumeTrue(Version.fromString(defaultTestEnvironment.agpVersion) >= Version.fromString("8.8.0-alpha08"))
+
+        with(testProject("misc/newAgpResources", defaultTestEnvironment)) {
+            gradle(":appModule:assembleDebug").checks {
+                check.logContains("Configure compose resources with KotlinMultiplatformAndroidComponentsExtension")
+
+                val resourcesFiles = sequenceOf(
+                    "composeResources/newagpresources.appmodule.generated.resources/values/strings.commonMain.cvr",
+                    "composeResources/newagpresources.featuremodule.generated.resources/values/strings.commonMain.cvr"
+                )
+                val apk = file("appModule/build/outputs/apk/debug/appModule-debug.apk")
+                checkResourcesZip(apk, resourcesFiles, true)
+            }
+        }
+    }
+
+    @Test
+    fun testDisableMultimoduleResourcesWithNewKotlin() {
+        with(testProject("misc/kmpResourcePublication")) {
+            file("gradle.properties").modify { content ->
+                content + "\n" + ComposeProperties.DISABLE_MULTIMODULE_RESOURCES + "=true"
+            }
+            gradle(":cmplib:build").checks {
+                check.logContains("Configure single-module compose resources")
+            }
+        }
+    }
+
+    private fun checkResourcesZip(zipFile: File, resourcesFiles: Sequence<String>, isAndroid: Boolean) {
+        println("check ZIP: '${zipFile.path}'")
         assertTrue(zipFile.exists(), "File not found: " + zipFile.path)
         ZipFile(zipFile).use { zip ->
             resourcesFiles.forEach { res ->
-                assertNotNull(
-                    zip.getEntry("composeResources/$subdir/$res"),
-                    "Resource not found: '$res' in zip '${zipFile.path}'"
-                )
+                println("check '$res' file")
+                if (isAndroid) {
+                    //android resources should be only in assets
+                    assertNull(zip.getEntry(res), "file = '$res'")
+                    assertNotNull(zip.getEntry("assets/$res"), "file = 'assets/$res'")
+                } else {
+                    assertNotNull(zip.getEntry(res), "file = '$res'")
+                }
             }
         }
     }
@@ -292,50 +398,51 @@ class ResourcesTest : GradlePluginTestBase() {
         file("src/jsMain/composeResources/files/platform.txt").writeNewFile("js")
 
         val commonResourcesDir = file("src/commonMain/composeResources")
+        val repackDir = "composeResources/app.group.resources_test.generated.resources"
         val commonResourcesFiles = commonResourcesDir.walkTopDown()
             .filter { !it.isDirectory && !it.isHidden }
-            .getConvertedResources(commonResourcesDir)
+            .getConvertedResources(commonResourcesDir, repackDir)
 
         gradle("build").checks {
-            check.taskSuccessful(":copyDemoDebugFontsToAndroidAssets")
-            check.taskSuccessful(":copyDemoReleaseFontsToAndroidAssets")
-            check.taskSuccessful(":copyFullDebugFontsToAndroidAssets")
-            check.taskSuccessful(":copyFullReleaseFontsToAndroidAssets")
+            check.taskSuccessful(":copyDemoDebugComposeResourcesToAndroidAssets")
+            check.taskSuccessful(":copyDemoReleaseComposeResourcesToAndroidAssets")
+            check.taskSuccessful(":copyFullDebugComposeResourcesToAndroidAssets")
+            check.taskSuccessful(":copyFullReleaseComposeResourcesToAndroidAssets")
 
             getAndroidApk("demo", "debug", "Resources-Test").let { apk ->
-                checkResourcesInZip(apk, commonResourcesFiles, true)
+                checkResourcesZip(apk, commonResourcesFiles, true)
                 assertEquals(
                     "android demo-debug",
-                    readFileInZip(apk, "files/platform.txt").decodeToString()
+                    readFileInZip(apk, "assets/$repackDir/files/platform.txt").decodeToString()
                 )
             }
             getAndroidApk("demo", "release", "Resources-Test").let { apk ->
-                checkResourcesInZip(apk, commonResourcesFiles, true)
+                checkResourcesZip(apk, commonResourcesFiles, true)
                 assertEquals(
                     "android demo-release",
-                    readFileInZip(apk, "files/platform.txt").decodeToString()
+                    readFileInZip(apk, "assets/$repackDir/files/platform.txt").decodeToString()
                 )
             }
             getAndroidApk("full", "debug", "Resources-Test").let { apk ->
-                checkResourcesInZip(apk, commonResourcesFiles, true)
+                checkResourcesZip(apk, commonResourcesFiles, true)
                 assertEquals(
                     "android full-debug",
-                    readFileInZip(apk, "files/platform.txt").decodeToString()
+                    readFileInZip(apk, "assets/$repackDir/files/platform.txt").decodeToString()
                 )
             }
             getAndroidApk("full", "release", "Resources-Test").let { apk ->
-                checkResourcesInZip(apk, commonResourcesFiles, true)
+                checkResourcesZip(apk, commonResourcesFiles, true)
                 assertEquals(
                     "android full-release",
-                    readFileInZip(apk, "files/platform.txt").decodeToString()
+                    readFileInZip(apk, "assets/$repackDir/files/platform.txt").decodeToString()
                 )
             }
 
             file("build/libs/Resources-Test-desktop.jar").let { jar ->
-                checkResourcesInZip(jar, commonResourcesFiles, false)
+                checkResourcesZip(jar, commonResourcesFiles, false)
                 assertEquals(
                     "desktop",
-                    readFileInZip(jar, "files/platform.txt").decodeToString()
+                    readFileInZip(jar, "$repackDir/files/platform.txt").decodeToString()
                 )
             }
 
@@ -343,52 +450,22 @@ class ResourcesTest : GradlePluginTestBase() {
             commonResourcesFiles.forEach { res ->
                 assertTrue(jsBuildDir.resolve(res).exists())
             }
-            assertEquals("js", jsBuildDir.resolve("files/platform.txt").readText())
+            assertEquals("js", jsBuildDir.resolve("$repackDir/files/platform.txt").readText())
         }
     }
 
-    @Test
-    fun testAndroidFonts(): Unit = with(testProject("misc/commonResources")) {
-        val commonResourcesDir = file("src/commonMain/composeResources")
-        val commonResourcesFiles = commonResourcesDir.walkTopDown()
-            .filter { !it.isDirectory && !it.isHidden }
-            .getConvertedResources(commonResourcesDir)
-
-        gradle("assembleDebug").checks {
-            check.taskSuccessful(":copyDebugFontsToAndroidAssets")
-
-            getAndroidApk("", "debug", "Resources-Test").let { apk ->
-                checkResourcesInZip(apk, commonResourcesFiles, true)
-            }
-        }
-
-        file("src/commonMain/composeResources/font-en").renameTo(
-            file("src/commonMain/composeResources/font-mdpi")
-        )
-        val newCommonResourcesFiles = commonResourcesDir.walkTopDown()
-            .filter { !it.isDirectory && !it.isHidden }
-            .getConvertedResources(commonResourcesDir)
-        gradle("assembleDebug").checks {
-            check.taskSuccessful(":copyDebugFontsToAndroidAssets")
-
-            getAndroidApk("", "debug", "Resources-Test").let { apk ->
-                checkResourcesInZip(apk, newCommonResourcesFiles, true)
-            }
-        }
-    }
-
-    private fun Sequence<File>.getConvertedResources(baseDir: File) = map { file ->
+    private fun Sequence<File>.getConvertedResources(baseDir: File, repackDir: String) = map { file ->
         val newFile = if (
             file.parentFile.name.startsWith("value") &&
             file.extension.equals("xml", true)
         ) {
-            file.parentFile.resolve(file.nameWithoutExtension + "." + XmlValuesConverterTask.CONVERTED_RESOURCE_EXT)
+            val cvrSuffix = file.parentFile.parentFile.parentFile.name
+            file.parentFile.resolve("${file.nameWithoutExtension}.$cvrSuffix.${XmlValuesConverterTask.CONVERTED_RESOURCE_EXT}")
         } else {
             file
         }
-        newFile.relativeTo(baseDir).invariantSeparatorsPath
+        Path(repackDir, newFile.relativeTo(baseDir).path).invariantSeparatorsPathString
     }
-
 
     private fun File.writeNewFile(text: String) {
         parentFile.mkdirs()
@@ -404,23 +481,6 @@ class ResourcesTest : GradlePluginTestBase() {
         }
     }
 
-    private fun checkResourcesInZip(file: File, commonResourcesFiles: Sequence<String>, isAndroid: Boolean) {
-        println("check ZIP: '${file.path}'")
-        assertTrue(file.exists())
-        ZipFile(file).use { zip ->
-            commonResourcesFiles.forEach { res ->
-                println("check '$res' file")
-                if (isAndroid && res.startsWith("font")) {
-                    //android fonts should be only in assets
-                    assertNull(zip.getEntry(res), "file = '$res'")
-                    assertNotNull(zip.getEntry("assets/$res"), "file = 'assets/$res'")
-                } else {
-                    assertNotNull(zip.getEntry(res), "file = '$res'")
-                }
-            }
-        }
-    }
-
     private fun readFileInZip(file: File, path: String): ByteArray = ZipFile(file).use { zip ->
         val platformTxt = zip.getEntry(path)
         assertNotNull(platformTxt, "file = '$path'")
@@ -431,7 +491,7 @@ class ResourcesTest : GradlePluginTestBase() {
     fun testUpToDateChecks(): Unit = with(testProject("misc/commonResources")) {
         gradle("prepareKotlinIdeaImport").checks {
             check.taskSuccessful(":generateComposeResClass")
-            assertTrue(file("build/generated/compose/resourceGenerator/kotlin/app/group/resources_test/generated/resources/Res.kt").exists())
+            assertTrue(file("build/generated/compose/resourceGenerator/kotlin/commonResClass/app/group/resources_test/generated/resources/Res.kt").exists())
         }
         gradle("prepareKotlinIdeaImport").checks {
             check.taskUpToDate(":generateComposeResClass")
@@ -444,8 +504,7 @@ class ResourcesTest : GradlePluginTestBase() {
             )
         }
         gradle("prepareKotlinIdeaImport").checks {
-            check.taskSuccessful(":generateComposeResClass")
-            assertFalse(file("build/generated/compose/resourceGenerator/kotlin/app/group/resources_test/generated/resources/Res.kt").exists())
+            check.taskSkipped(":generateComposeResClass")
         }
 
         modifyText("build.gradle.kts") { str ->
@@ -462,16 +521,16 @@ class ResourcesTest : GradlePluginTestBase() {
         }
         gradle("prepareKotlinIdeaImport").checks {
             check.taskSuccessful(":generateComposeResClass")
-            assertFalse(file("build/generated/compose/resourceGenerator/kotlin/app/group/resources_test/generated/resources/Res.kt").exists())
-            assertTrue(file("build/generated/compose/resourceGenerator/kotlin/io/company/resources_test/generated/resources/Res.kt").exists())
+            assertFalse(file("build/generated/compose/resourceGenerator/kotlin/commonResClass/app/group/resources_test/generated/resources/Res.kt").exists())
+            assertTrue(file("build/generated/compose/resourceGenerator/kotlin/commonResClass/io/company/resources_test/generated/resources/Res.kt").exists())
         }
     }
 
     @Test
     fun testEmptyResClass(): Unit = with(testProject("misc/emptyResources")) {
-        gradle("generateComposeResClass").checks {
+        gradle("prepareKotlinIdeaImport").checks {
             assertDirectoriesContentEquals(
-                file("build/generated/compose/resourceGenerator/kotlin/app/group/empty_res/generated/resources"),
+                file("build/generated/compose/resourceGenerator/kotlin"),
                 file("expected")
             )
         }
@@ -479,13 +538,13 @@ class ResourcesTest : GradlePluginTestBase() {
 
     @Test
     fun testJvmOnlyProject(): Unit = with(testProject("misc/jvmOnlyResources")) {
-        gradle("generateComposeResClass").checks {
+        gradle("jar").checks {
+            check.logContains("Configure java-only compose resources")
             assertDirectoriesContentEquals(
-                file("build/generated/compose/resourceGenerator/kotlin/me/app/jvmonlyresources/generated/resources"),
+                file("build/generated/compose/resourceGenerator/kotlin"),
                 file("expected")
             )
         }
-        gradle("jar")
     }
 
     //https://github.com/gmazzo/gradle-buildconfig-plugin/issues/131
@@ -509,8 +568,10 @@ class ResourcesTest : GradlePluginTestBase() {
         }
 
         val expectedFilesCount = expected.walkTopDown()
+            .filter { !it.isDirectory }
             .map { it.toPath().relativeTo(expectedPath) }.sorted().joinToString("\n")
         val actualFilesCount = actual.walkTopDown()
+            .filter { !it.isDirectory }
             .map { it.toPath().relativeTo(actualPath) }.sorted().joinToString("\n")
         assertEquals(expectedFilesCount, actualFilesCount)
     }
@@ -526,8 +587,136 @@ class ResourcesTest : GradlePluginTestBase() {
                 }
             """.trimIndent()
         )
-        gradle("generateComposeResClass").checks {
-            check.logContains("Generation Res class is disabled")
+        gradle("prepareKotlinIdeaImport").checks {
+            check.taskSkipped(":generateComposeResClass")
+            check.taskSkipped(":generateResourceAccessorsForCommonMain")
+            check.taskSkipped(":generateResourceAccessorsForDesktopMain")
+            check.taskSkipped(":generateResourceAccessorsForAndroidMain")
+            check.taskSkipped(":generateExpectResourceCollectorsForCommonMain")
+            check.taskSkipped(":generateActualResourceCollectorsForDesktopMain")
+            check.taskSkipped(":generateActualResourceCollectorsForAndroidMain")
+        }
+    }
+
+    @Test
+    fun iosResources() {
+        Assumptions.assumeTrue(currentOS == OS.MacOS)
+        val iosEnv = mapOf(
+            "PLATFORM_NAME" to "iphonesimulator",
+            "ARCHS" to "arm64",
+            "CONFIGURATION" to "Debug",
+        )
+        val testEnv = defaultTestEnvironment.copy(
+            additionalEnvVars = iosEnv
+        )
+
+        with(TestProject("misc/iosResources", testEnv)) {
+            gradle(":podspec", "-Pkotlin.native.cocoapods.generate.wrapper=true").checks {
+                assertEqualTextFiles(
+                    file("iosResources.podspec"),
+                    file("expected/iosResources.podspec")
+                )
+                file("build/compose/cocoapods/compose-resources").checkExists()
+            }
+
+            gradle(
+                ":syncFramework",
+                "-Pkotlin.native.cocoapods.platform=${iosEnv["PLATFORM_NAME"]}",
+                "-Pkotlin.native.cocoapods.archs=${iosEnv["ARCHS"]}",
+                "-Pkotlin.native.cocoapods.configuration=${iosEnv["CONFIGURATION"]}",
+                "--dry-run"
+            ).checks {
+                check.taskSkipped(":generateComposeResClass")
+
+                check.taskSkipped(":convertXmlValueResourcesForCommonMain")
+                check.taskSkipped(":copyNonXmlValueResourcesForCommonMain")
+                check.taskSkipped(":prepareComposeResourcesTaskForCommonMain")
+                check.taskSkipped(":generateResourceAccessorsForCommonMain")
+
+                check.taskSkipped(":convertXmlValueResourcesForNativeMain")
+                check.taskSkipped(":copyNonXmlValueResourcesForNativeMain")
+                check.taskSkipped(":prepareComposeResourcesTaskForNativeMain")
+                check.taskSkipped(":generateResourceAccessorsForNativeMain")
+
+                check.taskSkipped(":convertXmlValueResourcesForAppleMain")
+                check.taskSkipped(":copyNonXmlValueResourcesForAppleMain")
+                check.taskSkipped(":prepareComposeResourcesTaskForAppleMain")
+                check.taskSkipped(":generateResourceAccessorsForAppleMain")
+
+                check.taskSkipped(":convertXmlValueResourcesForIosMain")
+                check.taskSkipped(":copyNonXmlValueResourcesForIosMain")
+                check.taskSkipped(":prepareComposeResourcesTaskForIosMain")
+                check.taskSkipped(":generateResourceAccessorsForIosMain")
+
+                check.taskSkipped(":convertXmlValueResourcesForIosX64Main")
+                check.taskSkipped(":copyNonXmlValueResourcesForIosX64Main")
+                check.taskSkipped(":prepareComposeResourcesTaskForIosX64Main")
+                check.taskSkipped(":generateResourceAccessorsForIosX64Main")
+
+                check.taskSkipped(":syncPodComposeResourcesForIos")
+            }
+            gradle(":syncPodComposeResourcesForIos").checks {
+                check.taskNoSource(":convertXmlValueResourcesForCommonMain")
+                check.taskSuccessful(":copyNonXmlValueResourcesForCommonMain")
+                check.taskSuccessful(":prepareComposeResourcesTaskForCommonMain")
+                check.taskSkipped(":generateResourceAccessorsForCommonMain")
+
+                check.taskNoSource(":convertXmlValueResourcesForNativeMain")
+                check.taskNoSource(":copyNonXmlValueResourcesForNativeMain")
+                check.taskNoSource(":prepareComposeResourcesTaskForNativeMain")
+                check.taskSkipped(":generateResourceAccessorsForNativeMain")
+
+                check.taskNoSource(":convertXmlValueResourcesForAppleMain")
+                check.taskNoSource(":copyNonXmlValueResourcesForAppleMain")
+                check.taskNoSource(":prepareComposeResourcesTaskForAppleMain")
+                check.taskSkipped(":generateResourceAccessorsForAppleMain")
+
+                check.taskNoSource(":convertXmlValueResourcesForIosMain")
+                check.taskSuccessful(":copyNonXmlValueResourcesForIosMain")
+                check.taskSuccessful(":prepareComposeResourcesTaskForIosMain")
+                check.taskSkipped(":generateResourceAccessorsForIosMain")
+
+                check.taskNoSource(":convertXmlValueResourcesForIosX64Main")
+                check.taskNoSource(":copyNonXmlValueResourcesForIosX64Main")
+                check.taskNoSource(":prepareComposeResourcesTaskForIosX64Main")
+                check.taskSkipped(":generateResourceAccessorsForIosX64Main")
+
+                file("build/compose/cocoapods/compose-resources/composeResources/iosresources.generated.resources/drawable/compose-multiplatform.xml").checkExists()
+                file("build/compose/cocoapods/compose-resources/composeResources/iosresources.generated.resources/drawable/icon.xml").checkExists()
+            }
+        }
+    }
+
+    @Test
+    fun iosTestResources() {
+        Assumptions.assumeTrue(currentOS == OS.MacOS)
+        with(testProject("misc/iosResources")) {
+            gradle(":linkDebugTestIosX64", "--dry-run").checks {
+                check.taskSkipped(":copyTestComposeResourcesForIosX64")
+                check.taskSkipped(":linkDebugTestIosX64")
+            }
+            gradle(":copyTestComposeResourcesForIosX64").checks {
+                file("build/bin/iosX64/debugTest/compose-resources/composeResources/iosresources.generated.resources/drawable/compose-multiplatform.xml").checkExists()
+                file("build/bin/iosX64/debugTest/compose-resources/composeResources/iosresources.generated.resources/drawable/icon.xml").checkExists()
+            }
+        }
+    }
+
+    @Test
+    fun checkTestResources() {
+        with(testProject("misc/testResources")) {
+            gradle("check").checks {
+                check.logContains("Configure main resources for 'desktop' target")
+                check.logContains("Configure test resources for 'desktop' target")
+                check.logContains("Configure main resources for 'iosX64' target")
+                check.logContains("Configure test resources for 'iosX64' target")
+                check.logContains("Configure main resources for 'iosArm64' target")
+                check.logContains("Configure test resources for 'iosArm64' target")
+                check.logContains("Configure main resources for 'iosSimulatorArm64' target")
+                check.logContains("Configure test resources for 'iosSimulatorArm64' target")
+
+                check.taskSuccessful(":desktopTest")
+            }
         }
     }
 }

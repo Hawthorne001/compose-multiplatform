@@ -1,31 +1,56 @@
 package org.jetbrains.compose.resources
 
-import org.gradle.api.DefaultTask
 import org.gradle.api.Project
-import org.gradle.api.file.*
+import org.gradle.api.file.Directory
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.file.FileTree
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.Provider
-import org.gradle.api.tasks.*
+import org.gradle.api.tasks.IgnoreEmptyDirectories
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.Internal
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.OutputFiles
+import org.gradle.api.tasks.SkipWhenEmpty
+import org.gradle.api.tasks.TaskProvider
+import org.jetbrains.compose.internal.IdeaImportTask
+import org.jetbrains.compose.internal.utils.uppercaseFirstChar
+import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSet
 import org.w3c.dom.Node
+import org.xml.sax.SAXParseException
 import java.io.File
 import java.util.*
 import javax.inject.Inject
 import javax.xml.parsers.DocumentBuilderFactory
 
 internal fun Project.registerPrepareComposeResourcesTask(
-    userComposeResourcesDir: File,
-    preparedComposeResourcesDir: Provider<Directory>
+    sourceSet: KotlinSourceSet,
+    config: Provider<ResourcesExtension>
 ): TaskProvider<PrepareComposeResourcesTask> {
+    val userComposeResourcesDir: Provider<Directory> = config.flatMap { ext ->
+        ext.customResourceDirectories[sourceSet.name] ?: provider {
+            //default path
+            layout.projectDirectory.dir("src/${sourceSet.name}/$COMPOSE_RESOURCES_DIR")
+        }
+    }
+
+    val preparedComposeResourcesDir = layout.buildDirectory.dir(
+        "$RES_GEN_DIR/preparedResources/${sourceSet.name}/$COMPOSE_RESOURCES_DIR"
+    )
+
     val convertXmlValueResources = tasks.register(
-        "convertXmlValueResources",
+        "convertXmlValueResourcesFor${sourceSet.name.uppercaseFirstChar()}",
         XmlValuesConverterTask::class.java
     ) { task ->
+        task.fileSuffix.set(sourceSet.name)
         task.originalResourcesDir.set(userComposeResourcesDir)
         task.outputDir.set(preparedComposeResourcesDir)
     }
 
     val copyNonXmlValueResources = tasks.register(
-        "copyNonXmlValueResources",
+        "copyNonXmlValueResourcesFor${sourceSet.name.uppercaseFirstChar()}",
         CopyNonXmlValueResourcesTask::class.java
     ) { task ->
         task.originalResourcesDir.set(userComposeResourcesDir)
@@ -33,18 +58,28 @@ internal fun Project.registerPrepareComposeResourcesTask(
     }
 
     val prepareComposeResourcesTask = tasks.register(
-        "prepareComposeResourcesTask",
+        getPrepareComposeResourcesTaskName(sourceSet),
         PrepareComposeResourcesTask::class.java
     ) { task ->
         task.convertedXmls.set(convertXmlValueResources.map { it.realOutputFiles.get() })
         task.copiedNonXmls.set(copyNonXmlValueResources.map { it.realOutputFiles.get() })
-        task.outputDir.set(preparedComposeResourcesDir.map { it.asFile })
+        task.outputDir.set(preparedComposeResourcesDir)
     }
 
     return prepareComposeResourcesTask
 }
 
-internal abstract class CopyNonXmlValueResourcesTask : DefaultTask() {
+internal fun Project.getPreparedComposeResourcesDir(sourceSet: KotlinSourceSet): Provider<File> = tasks
+    .named(
+        getPrepareComposeResourcesTaskName(sourceSet),
+        PrepareComposeResourcesTask::class.java
+    )
+    .flatMap { it.outputDir.asFile }
+
+private fun getPrepareComposeResourcesTaskName(sourceSet: KotlinSourceSet) =
+    "prepareComposeResourcesTaskFor${sourceSet.name.uppercaseFirstChar()}"
+
+internal abstract class CopyNonXmlValueResourcesTask : IdeaImportTask() {
     @get:Inject
     abstract val fileSystem: FileSystemOperations
 
@@ -52,6 +87,8 @@ internal abstract class CopyNonXmlValueResourcesTask : DefaultTask() {
     abstract val originalResourcesDir: DirectoryProperty
 
     @get:InputFiles
+    @get:SkipWhenEmpty
+    @get:IgnoreEmptyDirectories
     val realInputFiles = originalResourcesDir.map { dir ->
         dir.asFileTree.matching { it.exclude("values*/*.xml") }
     }
@@ -64,10 +101,9 @@ internal abstract class CopyNonXmlValueResourcesTask : DefaultTask() {
         dir.asFileTree.matching { it.exclude("values*/*.${XmlValuesConverterTask.CONVERTED_RESOURCE_EXT}") }
     }
 
-    @TaskAction
-    fun run() {
+    override fun safeAction() {
         realOutputFiles.get().forEach { f -> f.delete() }
-        fileSystem.copy {  copy ->
+        fileSystem.copy { copy ->
             copy.includeEmptyDirs = false
             copy.from(originalResourcesDir) {
                 it.exclude("values*/*.xml")
@@ -77,18 +113,21 @@ internal abstract class CopyNonXmlValueResourcesTask : DefaultTask() {
     }
 }
 
-internal abstract class PrepareComposeResourcesTask : DefaultTask() {
+internal abstract class PrepareComposeResourcesTask : IdeaImportTask() {
     @get:InputFiles
+    @get:SkipWhenEmpty
+    @get:IgnoreEmptyDirectories
     abstract val convertedXmls: Property<FileTree>
 
     @get:InputFiles
+    @get:SkipWhenEmpty
+    @get:IgnoreEmptyDirectories
     abstract val copiedNonXmls: Property<FileTree>
 
     @get:OutputDirectory
-    abstract val outputDir: Property<File>
+    abstract val outputDir: DirectoryProperty
 
-    @TaskAction
-    fun run() {}
+    override fun safeAction() = Unit
 }
 
 internal data class ValueResourceRecord(
@@ -113,16 +152,21 @@ internal data class ValueResourceRecord(
     }
 }
 
-internal abstract class XmlValuesConverterTask : DefaultTask() {
+internal abstract class XmlValuesConverterTask : IdeaImportTask() {
     companion object {
         const val CONVERTED_RESOURCE_EXT = "cvr" //Compose Value Resource
         private const val FORMAT_VERSION = 0
     }
 
+    @get:Input
+    abstract val fileSuffix: Property<String>
+
     @get:Internal
     abstract val originalResourcesDir: DirectoryProperty
 
     @get:InputFiles
+    @get:SkipWhenEmpty
+    @get:IgnoreEmptyDirectories
     val realInputFiles = originalResourcesDir.map { dir ->
         dir.asFileTree.matching { it.include("values*/*.xml") }
     }
@@ -132,12 +176,13 @@ internal abstract class XmlValuesConverterTask : DefaultTask() {
 
     @get:OutputFiles
     val realOutputFiles = outputDir.map { dir ->
-        dir.asFileTree.matching { it.include("values*/*.$CONVERTED_RESOURCE_EXT") }
+        val suffix = fileSuffix.get()
+        dir.asFileTree.matching { it.include("values*/*.$suffix.$CONVERTED_RESOURCE_EXT") }
     }
 
-    @TaskAction
-    fun run() {
+    override fun safeAction() {
         val outDir = outputDir.get().asFile
+        val suffix = fileSuffix.get()
         realOutputFiles.get().forEach { f -> f.delete() }
         originalResourcesDir.get().asFile.listNotHiddenFiles().forEach { valuesDir ->
             if (valuesDir.isDirectory && valuesDir.name.startsWith("values")) {
@@ -145,9 +190,15 @@ internal abstract class XmlValuesConverterTask : DefaultTask() {
                     if (f.extension.equals("xml", true)) {
                         val output = outDir
                             .resolve(f.parentFile.name)
-                            .resolve(f.nameWithoutExtension + ".$CONVERTED_RESOURCE_EXT")
+                            .resolve(f.nameWithoutExtension + ".$suffix.$CONVERTED_RESOURCE_EXT")
                         output.parentFile.mkdirs()
-                        convert(f, output)
+                        try {
+                            convert(f, output)
+                        } catch (e: SAXParseException) {
+                            error("XML file ${f.absolutePath} is not valid. Check the file content.")
+                        } catch (e: Exception) {
+                            error("XML file ${f.absolutePath} is not valid. ${e.message}")
+                        }
                     }
                 }
             }
@@ -157,17 +208,28 @@ internal abstract class XmlValuesConverterTask : DefaultTask() {
     private fun convert(original: File, converted: File) {
         val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(original)
         val items = doc.getElementsByTagName("resources").item(0).childNodes
-        val records = List(items.length) { items.item(it) }.mapNotNull { getItemRecord(it)?.getAsString() }
+        val records = List(items.length) { items.item(it) }
+            .filter { it.hasAttributes() }
+            .map { getItemRecord(it) }
+
+        //check there are no duplicates type + key
+        records.groupBy { it.key }
+            .filter { it.value.size > 1 }
+            .forEach { (key, records) ->
+                val allTypes = records.map { it.type }
+                require(allTypes.size == allTypes.toSet().size) { "Duplicated key '$key'." }
+            }
+
         val fileContent = buildString {
             appendLine("version:$FORMAT_VERSION")
-            records.sorted().forEach { appendLine(it) }
+            records.map { it.getAsString() }.sorted().forEach { appendLine(it) }
         }
         converted.writeText(fileContent)
     }
 
-    private fun getItemRecord(node: Node): ValueResourceRecord? {
-        val type = ResourceType.fromString(node.nodeName) ?: return null
-        val key = node.attributes.getNamedItem("name").nodeValue
+    private fun getItemRecord(node: Node): ValueResourceRecord {
+        val type = ResourceType.fromString(node.nodeName) ?: error("Unknown resource type: '${node.nodeName}'.")
+        val key = node.attributes.getNamedItem("name")?.nodeValue ?: error("Attribute 'name' not found.")
         val value: String
         when (type) {
             ResourceType.STRING -> {
@@ -195,7 +257,8 @@ internal abstract class XmlValuesConverterTask : DefaultTask() {
                         quantity.uppercase() + ":" + content.asBase64()
                     }
             }
-            else -> error("Unknown string resource type: '$type'")
+
+            else -> error("Unknown string resource type: '$type'.")
         }
         return ValueResourceRecord(type, key, value)
     }

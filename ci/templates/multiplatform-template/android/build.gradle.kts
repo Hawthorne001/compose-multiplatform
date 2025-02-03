@@ -1,16 +1,17 @@
 plugins {
     id("com.android.application")
     kotlin("android")
+    kotlin("plugin.compose")
     id("org.jetbrains.compose")
 }
 
 android {
-    compileSdk = 34
+    compileSdk = 35
     namespace = "com.myapplication"
 
     defaultConfig {
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
     }

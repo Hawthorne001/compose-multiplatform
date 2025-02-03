@@ -1,12 +1,13 @@
 plugins {
     id("com.android.library")
     kotlin("multiplatform")
+    kotlin("plugin.compose")
     id("org.jetbrains.compose")
     id("com.apollographql.apollo").version("2.3.0")
 }
 
 kotlin {
-    android()
+    androidTarget()
     jvm("desktop")
 
     sourceSets {
@@ -39,7 +40,7 @@ apollo {
 }
 
 android {
-    compileSdk = 34
+    compileSdk = 35
     namespace = "com.example.myapplication.common"
 
     defaultConfig {
