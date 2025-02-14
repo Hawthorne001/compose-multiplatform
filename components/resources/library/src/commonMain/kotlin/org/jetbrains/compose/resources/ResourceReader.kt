@@ -1,8 +1,9 @@
 package org.jetbrains.compose.resources
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.staticCompositionLocalOf
 
-@ExperimentalResourceApi
 class MissingResourceException(path: String) : Exception("Missing resource with path: $path")
 
 /**
@@ -35,3 +36,7 @@ internal val DefaultResourceReader = getPlatformResourceReader()
 
 //ResourceReader provider will be overridden for tests
 internal val LocalResourceReader = staticCompositionLocalOf { DefaultResourceReader }
+
+//For an android preview we need to initialize the resource reader with the local context
+internal expect val ProvidableCompositionLocal<ResourceReader>.currentOrPreview: ResourceReader
+    @Composable get

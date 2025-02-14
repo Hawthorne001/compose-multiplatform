@@ -1,11 +1,12 @@
 plugins {
     id("com.android.library")
     kotlin("multiplatform")
+    kotlin("plugin.compose")
     id("org.jetbrains.compose")
 }
 
 kotlin {
-    android()
+    androidTarget()
     jvm("desktop")
 
     sourceSets {
@@ -28,7 +29,7 @@ kotlin {
 }
 
 android {
-    compileSdk = 34
+    compileSdk = 35
     namespace = "com.myapplication.common"
 
     defaultConfig {

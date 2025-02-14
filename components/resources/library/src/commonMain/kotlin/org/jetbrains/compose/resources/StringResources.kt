@@ -9,7 +9,6 @@ import androidx.compose.runtime.*
  * @param key The key used to retrieve the string resource.
  * @param items The set of resource items associated with the string resource.
  */
-@ExperimentalResourceApi
 @Immutable
 class StringResource
 @InternalResourceApi constructor(id: String, val key: String, items: Set<ResourceItem>) : Resource(id, items)
@@ -22,10 +21,9 @@ class StringResource
  *
  * @throws IllegalArgumentException If the provided ID is not found in the resource file.
  */
-@ExperimentalResourceApi
 @Composable
 fun stringResource(resource: StringResource): String {
-    val resourceReader = LocalResourceReader.current
+    val resourceReader = LocalResourceReader.currentOrPreview
     val str by rememberResourceState(resource, { "" }) { env ->
         loadString(resource, resourceReader, env)
     }
@@ -40,11 +38,22 @@ fun stringResource(resource: StringResource): String {
  *
  * @throws IllegalArgumentException If the provided ID is not found in the resource file.
  */
-@ExperimentalResourceApi
 suspend fun getString(resource: StringResource): String =
-    loadString(resource, DefaultResourceReader, getResourceEnvironment())
+    loadString(resource, DefaultResourceReader, getSystemResourceEnvironment())
 
-@OptIn(ExperimentalResourceApi::class, InternalResourceApi::class)
+/**
+ * Loads a string using the specified string resource.
+ *
+ * @param environment The resource environment.
+ * @param resource The string resource to be used.
+ * @return The loaded string resource.
+ *
+ * @throws IllegalArgumentException If the provided ID is not found in the resource file.
+ */
+@ExperimentalResourceApi
+suspend fun getString(environment: ResourceEnvironment, resource: StringResource): String =
+    loadString(resource, DefaultResourceReader, environment)
+
 private suspend fun loadString(
     resource: StringResource,
     resourceReader: ResourceReader,
@@ -64,10 +73,9 @@ private suspend fun loadString(
  *
  * @throws IllegalArgumentException If the provided ID is not found in the resource file.
  */
-@ExperimentalResourceApi
 @Composable
 fun stringResource(resource: StringResource, vararg formatArgs: Any): String {
-    val resourceReader = LocalResourceReader.current
+    val resourceReader = LocalResourceReader.currentOrPreview
     val args = formatArgs.map { it.toString() }
     val str by rememberResourceState(resource, args, { "" }) { env ->
         loadString(resource, args, resourceReader, env)
@@ -84,15 +92,35 @@ fun stringResource(resource: StringResource, vararg formatArgs: Any): String {
  *
  * @throws IllegalArgumentException If the provided ID is not found in the resource file.
  */
-@ExperimentalResourceApi
 suspend fun getString(resource: StringResource, vararg formatArgs: Any): String = loadString(
     resource,
     formatArgs.map { it.toString() },
     DefaultResourceReader,
-    getResourceEnvironment()
+    getSystemResourceEnvironment()
 )
 
-@OptIn(ExperimentalResourceApi::class)
+/**
+ * Loads a formatted string using the specified string resource and arguments.
+ *
+ * @param environment The resource environment.
+ * @param resource The string resource to be used.
+ * @param formatArgs The arguments to be inserted into the formatted string.
+ * @return The formatted string resource.
+ *
+ * @throws IllegalArgumentException If the provided ID is not found in the resource file.
+ */
+@ExperimentalResourceApi
+suspend fun getString(
+    environment: ResourceEnvironment,
+    resource: StringResource,
+    vararg formatArgs: Any
+): String = loadString(
+    resource,
+    formatArgs.map { it.toString() },
+    DefaultResourceReader,
+    environment
+)
+
 private suspend fun loadString(
     resource: StringResource,
     args: List<String>,

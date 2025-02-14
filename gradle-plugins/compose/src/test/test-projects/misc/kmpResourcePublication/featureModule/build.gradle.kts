@@ -1,6 +1,7 @@
 plugins {
     id("org.jetbrains.compose")
     kotlin("multiplatform")
+    kotlin("plugin.compose")
     id("com.android.library")
 }
 
@@ -29,7 +30,7 @@ kotlin {
 
 android {
     namespace = "me.sample.feature"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         minSdk = 24
